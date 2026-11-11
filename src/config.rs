@@ -13,6 +13,8 @@ pub struct Config {
     pub default_flavour: String,
     pub hostname: String,
     pub default_user: String,
+    #[serde(default)]
+    pub default_password: Option<String>,
     pub alarm_mirror: String,
     pub parch_mirror: String,
     pub x86_64_mirror: String,
@@ -51,6 +53,7 @@ impl Default for Config {
             default_flavour: "phosh".into(),
             hostname: "parch-mobile".into(),
             default_user: "parch".into(),
+            default_password: None,
             alarm_mirror: "http://mirror.archlinuxarm.org/$arch/$repo".into(),
             parch_mirror: "https://repo.parchlinux.com/$arch".into(),
             x86_64_mirror: "https://geo.mirror.pkgbuild.com/$repo/os/$arch".into(),

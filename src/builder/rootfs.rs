@@ -206,11 +206,22 @@ LABEL=PARCH_ROOT  /      ext4  defaults,noatime  0  1
             ];
             let _ = ChrootRunner::run_in_chroot(rootfs, useradd_cmd);
 
+            let pass = self.config.default_password.as_deref().unwrap_or("parch");
             let passwd_script = format!(
-                "echo '{user}:{user}' | chpasswd && echo 'root:parch' | chpasswd",
-                user = user
+                "echo '{user}:{pass}' | chpasswd && echo 'root:{pass}' | chpasswd",
+                user = user,
+                pass = pass
             );
             let _ = ChrootRunner::run_in_chroot(rootfs, &["/bin/sh", "-c", &passwd_script]);
+
+            let sudoers_d = rootfs.join("etc").join("sudoers.d");
+            if std::fs::create_dir_all(&sudoers_d).is_err() {
+                let _ = PrivilegedRunner::create_dir_all(&sudoers_d);
+            }
+            let _ = PrivilegedRunner::write_file(
+                &sudoers_d.join("wheel"),
+                "%wheel ALL=(ALL:ALL) ALL\n",
+            );
 
             for service in &self.flavour.services {
                 let _ = ChrootRunner::run_in_chroot(rootfs, &["systemctl", "enable", service]);

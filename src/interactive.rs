@@ -4,7 +4,7 @@ use crate::error::{PootstrapError, Result};
 use crate::isolation::ChrootRunner;
 use crate::profile::{DeviceProfile, FlavourProfile};
 use crate::qemu::QemuRunner;
-use dialoguer::{theme::ColorfulTheme, Confirm, Select};
+use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password, Select};
 
 pub fn start_interactive_session(config: &mut Config) -> Result<()> {
     let theme = ColorfulTheme::default();
@@ -17,6 +17,7 @@ pub fn start_interactive_session(config: &mut Config) -> Result<()> {
         let menu_items = vec![
             format!("Select Target Device (currently: {})", config.default_device),
             format!("Select UI Flavour (currently: {})", config.default_flavour),
+            format!("Configure User & Password (currently: {})", config.default_user),
             "Build ARM64 QCOW2 Image (for QEMU / KVM)".to_string(),
             "Build Raw Disk Image (.img)".to_string(),
             "Build Rootfs Directory".to_string(),
@@ -35,11 +36,12 @@ pub fn start_interactive_session(config: &mut Config) -> Result<()> {
         match selection {
             0 => select_device(config, &theme)?,
             1 => select_flavour(config, &theme)?,
-            2 => build_qcow2_workflow(config, &theme)?,
-            3 => build_raw_image_workflow(config)?,
-            4 => build_rootfs_workflow(config)?,
-            5 => launch_qemu_workflow(config)?,
-            6 => enter_chroot_workflow(config)?,
+            2 => configure_user_workflow(config, &theme)?,
+            3 => build_qcow2_workflow(config, &theme)?,
+            4 => build_raw_image_workflow(config, &theme)?,
+            5 => build_rootfs_workflow(config, &theme)?,
+            6 => launch_qemu_workflow(config)?,
+            7 => enter_chroot_workflow(config)?,
             _ => {
                 println!("Exiting pootstrap. Goodbye!");
                 break;
@@ -96,7 +98,39 @@ fn select_flavour(config: &mut Config, theme: &ColorfulTheme) -> Result<()> {
     Ok(())
 }
 
-fn build_qcow2_workflow(config: &Config, theme: &ColorfulTheme) -> Result<()> {
+fn configure_user_workflow(config: &mut Config, theme: &ColorfulTheme) -> Result<()> {
+    let username: String = Input::with_theme(theme)
+        .with_prompt("Enter username for the target system")
+        .default(config.default_user.clone())
+        .interact_text()
+        .map_err(|e| PootstrapError::Config(e.to_string()))?;
+
+    let password = Password::with_theme(theme)
+        .with_prompt(format!("Enter password for user '{}'", username))
+        .with_confirmation("Confirm password", "Passwords do not match. Try again.")
+        .interact()
+        .map_err(|e| PootstrapError::Config(e.to_string()))?;
+
+    config.default_user = username;
+    config.default_password = Some(password);
+
+    let config_path = Config::config_file_path();
+    config.save(&config_path)?;
+    println!("\nUser credentials configured. Configuration saved.\n");
+    Ok(())
+}
+
+fn ensure_user_credentials(config: &mut Config, theme: &ColorfulTheme) -> Result<()> {
+    if config.default_password.is_none() {
+        println!("\nNo target user password configured yet.");
+        configure_user_workflow(config, theme)?;
+    }
+    Ok(())
+}
+
+fn build_qcow2_workflow(config: &mut Config, theme: &ColorfulTheme) -> Result<()> {
+    ensure_user_credentials(config, theme)?;
+
     let dev = DeviceProfile::find(&config.default_device)
         .ok_or(PootstrapError::DeviceNotFound(config.default_device.clone()))?;
     let flv = FlavourProfile::find(&config.default_flavour)
@@ -105,6 +139,7 @@ fn build_qcow2_workflow(config: &Config, theme: &ColorfulTheme) -> Result<()> {
     println!("\nPreparing to build QCOW2 image:");
     println!("  Target Device:  {} ({})", dev.name, dev.arch);
     println!("  UI Flavour:     {}", flv.display_name);
+    println!("  User Account:   {}", config.default_user);
     println!("  Output format:  QEMU QCOW2\n");
 
     let rootfs_dir = config
@@ -146,7 +181,9 @@ fn build_qcow2_workflow(config: &Config, theme: &ColorfulTheme) -> Result<()> {
     Ok(())
 }
 
-fn build_raw_image_workflow(config: &Config) -> Result<()> {
+fn build_raw_image_workflow(config: &mut Config, theme: &ColorfulTheme) -> Result<()> {
+    ensure_user_credentials(config, theme)?;
+
     let dev = DeviceProfile::find(&config.default_device)
         .ok_or(PootstrapError::DeviceNotFound(config.default_device.clone()))?;
     let flv = FlavourProfile::find(&config.default_flavour)
@@ -173,7 +210,9 @@ fn build_raw_image_workflow(config: &Config) -> Result<()> {
     Ok(())
 }
 
-fn build_rootfs_workflow(config: &Config) -> Result<()> {
+fn build_rootfs_workflow(config: &mut Config, theme: &ColorfulTheme) -> Result<()> {
+    ensure_user_credentials(config, theme)?;
+
     let dev = DeviceProfile::find(&config.default_device)
         .ok_or(PootstrapError::DeviceNotFound(config.default_device.clone()))?;
     let flv = FlavourProfile::find(&config.default_flavour)
