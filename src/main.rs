@@ -126,7 +126,7 @@ fn handle_device(args: cli::DeviceArgs) -> Result<()> {
         DeviceSubcommand::List => {
             println!("{:<22} {:<18} {:<10} {:<24}", "CODENAME", "MANUFACTURER", "ARCH", "NAME");
             println!("{}", "-".repeat(78));
-            for dev in DeviceProfile::builtin_profiles() {
+            for dev in DeviceProfile::all_profiles() {
                 println!(
                     "{:<22} {:<18} {:<10} {:<24}",
                     dev.codename,
@@ -217,6 +217,7 @@ fn handle_image(config: &Config, args: cli::ImageArgs) -> Result<()> {
             rootfs,
             output,
             format,
+            chunk_size,
         } => {
             let dev_name = device.unwrap_or_else(|| config.default_device.clone());
             let dev = DeviceProfile::find(&dev_name)
@@ -234,9 +235,113 @@ fn handle_image(config: &Config, args: cli::ImageArgs) -> Result<()> {
             });
 
             if !builder::is_valid_rootfs(&rootfs_dir) {
-                tracing::info!("Rootfs directory {:?} is not populated. Building it first...", rootfs_dir);
-                let rootfs_builder = builder::RootfsBuilder::new(config, &dev, &flv, rootfs_dir.clone());
+                tracing::info!(
+                    "Rootfs directory {:?} is not populated. Building it first...",
+                    rootfs_dir
+                );
+                let rootfs_builder =
+                    builder::RootfsBuilder::new(config, &dev, &flv, rootfs_dir.clone());
                 rootfs_builder.build()?;
+            }
+
+            if format.to_lowercase() == "bootimg" {
+                let output_bootimg = output.unwrap_or_else(|| {
+                    config
+                        .output_dir
+                        .join(format!("boot-{}-{}.img", dev.codename, flv.name))
+                });
+
+                let kernel_candidates = [
+                    rootfs_dir.join("boot/Image"),
+                    rootfs_dir.join("boot/Image.gz"),
+                    rootfs_dir.join("boot/vmlinuz-linux"),
+                    rootfs_dir.join("boot/vmlinuz"),
+                ];
+                let kernel_path = kernel_candidates
+                    .into_iter()
+                    .find(|p| p.exists())
+                    .ok_or_else(|| {
+                        PootstrapError::ImageBuild("No kernel binary found in rootfs /boot".into())
+                    })?;
+
+                let ramdisk_candidates = [
+                    rootfs_dir.join("boot/initramfs-linux.img"),
+                    rootfs_dir.join("boot/initramfs-linux-fallback.img"),
+                    rootfs_dir.join("boot/initramfs.img"),
+                ];
+                let ramdisk_path = ramdisk_candidates
+                    .into_iter()
+                    .find(|p| p.exists())
+                    .ok_or_else(|| {
+                        PootstrapError::ImageBuild(
+                            "No initramfs image found in rootfs /boot".into(),
+                        )
+                    })?;
+
+                let dtb_path = dev.dtb.as_ref().and_then(|dtb_sub| {
+                    let direct = rootfs_dir.join("boot/dtbs").join(dtb_sub);
+                    if direct.exists() {
+                        Some(direct)
+                    } else {
+                        let alt = rootfs_dir.join("boot").join(dtb_sub);
+                        if alt.exists() {
+                            Some(alt)
+                        } else {
+                            None
+                        }
+                    }
+                });
+
+                let base_addr = dev.base_address.unwrap_or(0x80000000) as u32;
+                let page_size = dev.page_size.unwrap_or(4096);
+                let cmdline = dev.kernel_cmdline.clone().unwrap_or_else(|| {
+                    "console=ttyMSM0,115200 root=/dev/mmcblk0p2 rw rootwait".into()
+                });
+
+                let boot_builder = builder::BootImgBuilder::new(
+                    kernel_path,
+                    ramdisk_path,
+                    output_bootimg.clone(),
+                )
+                .with_dtb(dtb_path)
+                .with_cmdline(cmdline)
+                .with_base(base_addr)
+                .with_page_size(page_size);
+
+                let built = boot_builder.build()?;
+                println!("\nAndroid boot image created successfully: {:?}\n", built);
+                return Ok(());
+            }
+
+            if format.to_lowercase() == "sparse" {
+                let output_sparse = output.unwrap_or_else(|| {
+                    config
+                        .output_dir
+                        .join(format!("parch-{}-{}.simg", dev.codename, flv.name))
+                });
+
+                let raw_tmp = config
+                    .output_dir
+                    .join(format!("parch-{}-{}.raw.tmp", dev.codename, flv.name));
+
+                let image_builder = builder::ImageBuilder::new(&dev, &rootfs_dir, raw_tmp.clone())
+                    .with_format(ImageFormat::Raw);
+                image_builder.build()?;
+
+                let max_bytes = chunk_size.map(|mb| mb * 1024 * 1024);
+                let sparse_builder =
+                    builder::SparseImageBuilder::new(raw_tmp.clone(), output_sparse)
+                        .with_max_chunk_size(max_bytes);
+
+                let chunks = sparse_builder.build()?;
+                let _ = std::fs::remove_file(&raw_tmp);
+
+                println!("\nAndroid sparse image created successfully:");
+                for c in chunks {
+                    println!("  - {:?}", c);
+                }
+                println!();
+                return Ok(());
             }
 
             let is_qcow2 = format.to_lowercase() == "qcow2";
@@ -254,8 +359,8 @@ fn handle_image(config: &Config, args: cli::ImageArgs) -> Result<()> {
                 ImageFormat::Raw
             };
 
-            let image_builder = builder::ImageBuilder::new(&dev, &rootfs_dir, output_img)
-                .with_format(image_format);
+            let image_builder =
+                builder::ImageBuilder::new(&dev, &rootfs_dir, output_img).with_format(image_format);
 
             image_builder.build()?;
         }
@@ -403,11 +508,64 @@ fn handle_run(config: &Config, args: cli::RunArgs) -> Result<()> {
 }
 
 fn handle_flash(_config: &Config, args: cli::FlashArgs) -> Result<()> {
+    if args.boot || args.method.as_deref() == Some("fastboot-boot") {
+        tracing::info!(
+            "Performing fastboot RAM boot testing on {:?}",
+            args.image
+        );
+        flash::FastbootFlasher::boot_kernel(&args.image)?;
+        println!("\nSuccessfully booted kernel image into RAM via fastboot.\n");
+        return Ok(());
+    }
+
     let method = args.method.unwrap_or_else(|| "fastboot".to_string());
 
     match method.to_lowercase().as_str() {
         "fastboot" => {
-            flash::FastbootFlasher::flash_partition("userdata", &args.image)?;
+            let partition = args.partition.unwrap_or_else(|| {
+                let fname = args
+                    .image
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                if fname.starts_with("boot") {
+                    "boot".to_string()
+                } else {
+                    "userdata".to_string()
+                }
+            });
+
+            let mut chunks = Vec::new();
+            if let Some(parent) = args.image.parent() {
+                let file_name = args
+                    .image
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                let prefix = format!("{}.", file_name);
+                if let Ok(entries) = std::fs::read_dir(parent) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                            let is_chunk = name.starts_with(&prefix)
+                                && name
+                                    .split('.')
+                                    .next_back()
+                                    .is_some_and(|ext| ext.chars().all(|c| c.is_ascii_digit()));
+                            if is_chunk {
+                                chunks.push(path);
+                            }
+                        }
+                    }
+                }
+            }
+            chunks.sort();
+
+            if !chunks.is_empty() {
+                flash::FastbootFlasher::flash_sparse_chunks(&partition, &chunks)?;
+            } else {
+                flash::FastbootFlasher::flash_partition(&partition, &args.image)?;
+            }
         }
         "jumpdrive" => {
             let target = match args.target {
@@ -426,7 +584,7 @@ fn handle_flash(_config: &Config, args: cli::FlashArgs) -> Result<()> {
         }
         other => {
             return Err(PootstrapError::FlashError(format!(
-                "Unsupported flash method '{}'. Supported: fastboot, jumpdrive",
+                "Unsupported flash method '{}'. Supported: fastboot, jumpdrive, fastboot-boot",
                 other
             )));
         }

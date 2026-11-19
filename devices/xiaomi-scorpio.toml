@@ -1,0 +1,22 @@
+codename = "xiaomi-scorpio"
+name = "Mi Note 2 (Scorpio)"
+manufacturer = "Xiaomi"
+arch = "aarch64"
+soc = "Qualcomm Snapdragon 821"
+kernel_package = "linux-postmarketos-qcom-msm8996"
+dtb = "qcom/msm8996-xiaomi-scorpio.dtb"
+bootloader = "lk2nd"
+flash_method = "fastboot"
+boot_fs = "ext4"
+root_fs = "ext4"
+boot_size_mb = 128
+root_size_mb = 4096
+extra_packages = ["lk2nd-msm8996"]
+base_address = 2147483648
+page_size = 4096
+kernel_cmdline = "console=ttyMSM0,115200,n8 androidboot.hardware=qcom user_debug=31"
+
+[screen]
+width = 1080
+height = 1920
+dpi = 386

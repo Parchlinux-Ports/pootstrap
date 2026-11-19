@@ -164,8 +164,11 @@ pub enum ImageSubcommand {
         #[arg(short, long, help = "Output disk image file path (.img or .qcow2)")]
         output: Option<PathBuf>,
 
-        #[arg(long, default_value = "qcow2", help = "Image format: qcow2 or raw")]
+        #[arg(long, default_value = "qcow2", help = "Image format: qcow2, raw, sparse, or bootimg")]
         format: String,
+
+        #[arg(long, help = "Maximum chunk size in MB for sparse images")]
+        chunk_size: Option<u64>,
     },
 }
 
@@ -213,17 +216,26 @@ pub struct RunArgs {
 
 #[derive(Args, Debug)]
 pub struct FlashArgs {
-    #[arg(short, long, help = "Flashing method (fastboot or jumpdrive)")]
+    #[arg(short, long, help = "Flashing method (fastboot, jumpdrive, or fastboot-boot)")]
     pub method: Option<String>,
 
     #[arg(short, long, help = "Target device codename")]
     pub device: Option<String>,
 
-    #[arg(short, long, help = "Path to the disk image to flash")]
+    #[arg(short, long, help = "Path to the disk image to flash or boot")]
     pub image: PathBuf,
 
     #[arg(short, long, help = "Target block device for Jumpdrive (e.g. /dev/sdb)")]
     pub target: Option<PathBuf>,
+
+    #[arg(short, long, help = "Target partition for fastboot (default: userdata or boot)")]
+    pub partition: Option<String>,
+
+    #[arg(long, help = "Test kernel in device RAM via fastboot boot without flashing storage")]
+    pub boot: bool,
+
+    #[arg(long, help = "Maximum chunk size in MB for fastboot sparse images")]
+    pub chunk_size: Option<u64>,
 }
 
 #[derive(Args, Debug)]

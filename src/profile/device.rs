@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -106,6 +107,12 @@ pub struct DeviceProfile {
     pub boot_size_mb: u64,
     pub root_size_mb: u64,
     pub extra_packages: Vec<String>,
+    #[serde(default)]
+    pub base_address: Option<u64>,
+    #[serde(default)]
+    pub page_size: Option<u32>,
+    #[serde(default)]
+    pub kernel_cmdline: Option<String>,
 }
 
 impl DeviceProfile {
@@ -127,6 +134,9 @@ impl DeviceProfile {
                 boot_size_mb: 256,
                 root_size_mb: 3072,
                 extra_packages: vec![],
+                base_address: None,
+                page_size: None,
+                kernel_cmdline: None,
             },
             Self {
                 codename: "pine64-pinephone".into(),
@@ -152,6 +162,9 @@ impl DeviceProfile {
                     "pinephone-modem-scripts".into(),
                     "rtl8723bt-firmware".into(),
                 ],
+                base_address: None,
+                page_size: None,
+                kernel_cmdline: None,
             },
             Self {
                 codename: "pine64-pinetab2".into(),
@@ -173,6 +186,9 @@ impl DeviceProfile {
                 boot_size_mb: 256,
                 root_size_mb: 4096,
                 extra_packages: vec!["u-boot-pinetab2".into()],
+                base_address: None,
+                page_size: None,
+                kernel_cmdline: None,
             },
             Self {
                 codename: "purism-librem5".into(),
@@ -194,6 +210,9 @@ impl DeviceProfile {
                 boot_size_mb: 256,
                 root_size_mb: 4096,
                 extra_packages: vec!["u-boot-librem5".into()],
+                base_address: None,
+                page_size: None,
+                kernel_cmdline: None,
             },
             Self {
                 codename: "xiaomi-scorpio".into(),
@@ -215,6 +234,9 @@ impl DeviceProfile {
                 boot_size_mb: 128,
                 root_size_mb: 4096,
                 extra_packages: vec!["lk2nd-msm8996".into()],
+                base_address: Some(0x80000000),
+                page_size: Some(4096),
+                kernel_cmdline: Some("console=ttyMSM0,115200,n8 androidboot.hardware=qcom user_debug=31".into()),
             },
             Self {
                 codename: "raspberry-pi4".into(),
@@ -232,6 +254,9 @@ impl DeviceProfile {
                 boot_size_mb: 256,
                 root_size_mb: 4096,
                 extra_packages: vec!["raspberrypi-bootloader".into()],
+                base_address: None,
+                page_size: None,
+                kernel_cmdline: None,
             },
             Self {
                 codename: "generic-aarch64".into(),
@@ -249,12 +274,115 @@ impl DeviceProfile {
                 boot_size_mb: 256,
                 root_size_mb: 4096,
                 extra_packages: vec![],
+                base_address: None,
+                page_size: None,
+                kernel_cmdline: None,
             },
         ]
     }
 
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        if self.codename.trim().is_empty() {
+            return Err("Device codename cannot be empty".into());
+        }
+        if !self.codename.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+            return Err(format!(
+                "Device codename '{}' contains invalid characters (only alphanumeric, hyphen, underscore allowed)",
+                self.codename
+            ));
+        }
+        if self.name.trim().is_empty() {
+            return Err("Device name cannot be empty".into());
+        }
+        if self.kernel_package.trim().is_empty() {
+            return Err("Kernel package name cannot be empty".into());
+        }
+        if self.boot_size_mb < 32 {
+            return Err(format!(
+                "Boot partition size ({} MB) must be at least 32 MB",
+                self.boot_size_mb
+            ));
+        }
+        if self.root_size_mb < 512 {
+            return Err(format!(
+                "Root partition size ({} MB) must be at least 512 MB",
+                self.root_size_mb
+            ));
+        }
+        if let Some(ps) = self.page_size.filter(|&ps| ps == 0 || (ps & (ps - 1)) != 0) {
+            return Err(format!("Page size ({}) must be a non-zero power of 2", ps));
+        }
+        Ok(())
+    }
+
+    pub fn load_from_file(path: &Path) -> std::result::Result<Self, String> {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read file {:?}: {}", path, e))?;
+        let profile: Self = toml::from_str(&content)
+            .map_err(|e| format!("Failed to parse device profile {:?}: {}", path, e))?;
+        profile.validate()?;
+        Ok(profile)
+    }
+
+    pub fn discover_profiles() -> Vec<Self> {
+        let mut profiles = Vec::new();
+        let mut search_dirs = vec![
+            PathBuf::from("./devices"),
+            PathBuf::from("/etc/pootstrap/devices"),
+        ];
+
+        if let Ok(home) = std::env::var("HOME") {
+            search_dirs.push(
+                PathBuf::from(home)
+                    .join(".config")
+                    .join("pootstrap")
+                    .join("devices"),
+            );
+        }
+
+        for dir in search_dirs {
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file() && path.extension().is_some_and(|ext| ext == "toml") {
+                        match Self::load_from_file(&path) {
+                            Ok(profile) => {
+                                tracing::debug!("Loaded external device profile from {:?}", path);
+                                profiles.push(profile);
+                            }
+                            Err(e) => {
+                                tracing::warn!("Ignoring invalid device profile {:?}: {}", path, e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        profiles
+    }
+
+    pub fn all_profiles() -> Vec<Self> {
+        let external = Self::discover_profiles();
+        let builtin = Self::builtin_profiles();
+
+        let mut map: std::collections::HashMap<String, Self> = std::collections::HashMap::new();
+
+        for b in builtin {
+            map.insert(b.codename.clone(), b);
+        }
+
+        for ext in external {
+            map.insert(ext.codename.clone(), ext);
+        }
+
+        let mut list: Vec<Self> = map.into_values().collect();
+        list.sort_by(|a, b| a.codename.cmp(&b.codename));
+        list
+    }
+
     pub fn find(codename: &str) -> Option<Self> {
-        Self::builtin_profiles()
+        Self::all_profiles()
             .into_iter()
             .find(|d| d.codename == codename)
     }

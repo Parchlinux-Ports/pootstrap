@@ -1,0 +1,13 @@
+codename = "qemu-aarch64"
+name = "QEMU ARM64 Virtual Machine"
+manufacturer = "QEMU"
+arch = "aarch64"
+soc = "ARMv8 Virt Platform"
+kernel_package = "linux-aarch64"
+bootloader = "uefi"
+flash_method = "directblock"
+boot_fs = "fat32"
+root_fs = "ext4"
+boot_size_mb = 256
+root_size_mb = 3072
+extra_packages = []

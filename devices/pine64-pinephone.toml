@@ -1,0 +1,23 @@
+codename = "pine64-pinephone"
+name = "PinePhone"
+manufacturer = "PINE64"
+arch = "aarch64"
+soc = "Allwinner A64"
+kernel_package = "linux-pinephone"
+dtb = "allwinner/sun50i-a64-pinephone-1.2.dtb"
+bootloader = "u-boot"
+flash_method = "jumpdrive"
+boot_fs = "ext4"
+root_fs = "ext4"
+boot_size_mb = 256
+root_size_mb = 4096
+extra_packages = [
+    "u-boot-pinephone",
+    "pinephone-modem-scripts",
+    "rtl8723bt-firmware"
+]
+
+[screen]
+width = 720
+height = 1440
+dpi = 282

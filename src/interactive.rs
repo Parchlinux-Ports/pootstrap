@@ -55,7 +55,7 @@ pub fn start_interactive_session(config: &mut Config) -> Result<()> {
 }
 
 fn select_device(config: &mut Config, theme: &ColorfulTheme) -> Result<()> {
-    let devices = DeviceProfile::builtin_profiles();
+    let devices = DeviceProfile::all_profiles();
     let items: Vec<String> = devices
         .iter()
         .map(|d| format!("{:<22} - {} ({})", d.codename, d.name, d.soc))

@@ -20,17 +20,15 @@ fn test_pacman_conf_generation() {
     assert!(output.status.success());
 
     // Verify pacman conf format through unit test or by checking generated string
-    let conf_content = format!(
-        r#"[options]
+    let conf_content = r#"[options]
 Architecture = aarch64
 SigLevel = Never
 
 [parch-mobile]
 SigLevel = Never
 Server = https://repo.parchlinux.com/$arch/$repo/$arch
-"#
-    );
-    fs::write(&conf_path, &conf_content).unwrap();
+"#;
+    fs::write(&conf_path, conf_content).unwrap();
     let read_back = fs::read_to_string(&conf_path).unwrap();
     assert!(read_back.contains("Architecture = aarch64"));
     assert!(read_back.contains("[parch-mobile]"));
