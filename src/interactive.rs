@@ -20,6 +20,7 @@ pub fn start_interactive_session(config: &mut Config) -> Result<()> {
             format!("Configure User & Password (currently: {})", config.default_user),
             "Build ARM64 QCOW2 Image (for QEMU / KVM)".to_string(),
             "Build Raw Disk Image (.img)".to_string(),
+            "Build Live aarch64 ISO (.iso)".to_string(),
             "Build Rootfs Directory".to_string(),
             "Launch in QEMU VM".to_string(),
             "Enter Chroot Shell".to_string(),
@@ -39,9 +40,10 @@ pub fn start_interactive_session(config: &mut Config) -> Result<()> {
             2 => configure_user_workflow(config, &theme)?,
             3 => build_qcow2_workflow(config, &theme)?,
             4 => build_raw_image_workflow(config, &theme)?,
-            5 => build_rootfs_workflow(config, &theme)?,
-            6 => launch_qemu_workflow(config)?,
-            7 => enter_chroot_workflow(config)?,
+            5 => build_iso_workflow(config, &theme)?,
+            6 => build_rootfs_workflow(config, &theme)?,
+            7 => launch_qemu_workflow(config)?,
+            8 => enter_chroot_workflow(config)?,
             _ => {
                 println!("Exiting pootstrap. Goodbye!");
                 break;
@@ -207,6 +209,41 @@ fn build_raw_image_workflow(config: &mut Config, theme: &ColorfulTheme) -> Resul
     let image_builder = ImageBuilder::new(&dev, &rootfs_dir, output_raw);
     let final_path = image_builder.build()?;
     println!("\nSuccess! Disk image generated at: {:?}\n", final_path);
+    Ok(())
+}
+
+fn build_iso_workflow(config: &mut Config, theme: &ColorfulTheme) -> Result<()> {
+    ensure_user_credentials(config, theme)?;
+
+    let flv = FlavourProfile::find(&config.default_flavour)
+        .ok_or(PootstrapError::FlavourNotFound(config.default_flavour.clone()))?;
+
+    let dev = DeviceProfile::find("qemu-aarch64")
+        .or_else(|| DeviceProfile::find(&config.default_device))
+        .ok_or_else(|| PootstrapError::DeviceNotFound("qemu-aarch64".into()))?;
+
+    println!("\nPreparing to build Live aarch64 ISO:");
+    println!("  Target Flavour: {}", flv.display_name);
+    println!("  Output format:  Hybrid aarch64 UEFI ISO\n");
+
+    let rootfs_dir = config
+        .work_dir
+        .join("rootfs")
+        .join(format!("{}-{}", dev.codename, flv.name));
+
+    if !crate::builder::is_valid_rootfs(&rootfs_dir) {
+        println!("Rootfs directory {:?} is not populated. Building rootfs...", rootfs_dir);
+        let builder = RootfsBuilder::new(config, &dev, &flv, rootfs_dir.clone());
+        builder.build()?;
+    }
+
+    let output_iso = config
+        .output_dir
+        .join(format!("parch-aarch64-{}.iso", flv.name));
+
+    let iso_builder = crate::builder::IsoBuilder::new(config, &flv, rootfs_dir, output_iso);
+    let final_path = iso_builder.build()?;
+    println!("\nSuccess! Live ISO generated at: {:?}\n", final_path);
     Ok(())
 }
 

@@ -101,3 +101,52 @@ fn test_binfmt_check() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("binfmt_misc"));
 }
+
+#[test]
+fn test_iso_help() {
+    let output = Command::new("cargo")
+        .args(["run", "--quiet", "--", "iso", "build", "--help"])
+        .output()
+        .expect("Failed to execute pootstrap iso build --help");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Build live bootable aarch64 ISO"));
+    assert!(stdout.contains("--flavour"));
+}
+
+#[test]
+fn test_pkg_help() {
+    let output = Command::new("cargo")
+        .args(["run", "--quiet", "--", "pkg", "build", "--help"])
+        .output()
+        .expect("Failed to execute pootstrap pkg build --help");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Build package from a PKGBUILD directory"));
+}
+
+#[test]
+fn test_repo_help() {
+    let output = Command::new("cargo")
+        .args(["run", "--quiet", "--", "repo", "--help"])
+        .output()
+        .expect("Failed to execute pootstrap repo --help");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Manage local package repository"));
+}
+
+#[test]
+fn test_chroot_help() {
+    let output = Command::new("cargo")
+        .args(["run", "--quiet", "--", "chroot", "--help"])
+        .output()
+        .expect("Failed to execute pootstrap chroot --help");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Enter interactive chroot shell"));
+}

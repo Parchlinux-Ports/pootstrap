@@ -42,6 +42,9 @@ pub enum Commands {
     #[command(about = "Build flashable or virtual disk image (raw or qcow2)")]
     Image(ImageArgs),
 
+    #[command(about = "Build live bootable aarch64 ISO")]
+    Iso(IsoArgs),
+
     #[command(about = "Launch built disk image in QEMU virtual machine")]
     Run(RunArgs),
 
@@ -50,6 +53,12 @@ pub enum Commands {
 
     #[command(about = "Enter interactive chroot shell in rootfs")]
     Chroot(ChrootArgs),
+
+    #[command(about = "Build Arch packages from PKGBUILD recipes")]
+    Pkg(PkgArgs),
+
+    #[command(about = "Manage local package repository")]
+    Repo(RepoArgs),
 
     #[command(about = "Check foreign architecture binfmt_misc emulation")]
     Binfmt(BinfmtArgs),
@@ -161,6 +170,30 @@ pub enum ImageSubcommand {
 }
 
 #[derive(Args, Debug)]
+pub struct IsoArgs {
+    #[command(subcommand)]
+    pub command: IsoSubcommand,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum IsoSubcommand {
+    #[command(about = "Build live bootable aarch64 ISO image")]
+    Build {
+        #[arg(short, long, help = "Target flavour (e.g. minimal, phosh, plasma-mobile)")]
+        flavour: Option<String>,
+
+        #[arg(short, long, help = "Path to pre-existing rootfs directory")]
+        rootfs: Option<PathBuf>,
+
+        #[arg(short, long, help = "Output ISO file path (.iso)")]
+        output: Option<PathBuf>,
+
+        #[arg(long, default_value = "PARCH_AARCH64", help = "ISO volume identifier")]
+        volume_id: String,
+    },
+}
+
+#[derive(Args, Debug)]
 pub struct RunArgs {
     #[arg(short, long, help = "Path to disk image (.qcow2 or .img)")]
     pub image: Option<PathBuf>,
@@ -197,6 +230,12 @@ pub struct FlashArgs {
 pub struct ChrootArgs {
     #[arg(short, long, help = "Path to rootfs directory")]
     pub rootfs: Option<PathBuf>,
+
+    #[arg(short, long, help = "Target device codename")]
+    pub device: Option<String>,
+
+    #[arg(short, long, help = "Target flavour")]
+    pub flavour: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -209,4 +248,43 @@ pub struct BinfmtArgs {
 pub enum BinfmtSubcommand {
     #[command(about = "Check host binfmt_misc and QEMU user static emulation status")]
     Check,
+}
+
+#[derive(Args, Debug)]
+pub struct PkgArgs {
+    #[command(subcommand)]
+    pub command: PkgSubcommand,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PkgSubcommand {
+    #[command(about = "Build package from a PKGBUILD directory")]
+    Build {
+        #[arg(short, long, help = "Path to directory containing PKGBUILD (defaults to current directory)")]
+        path: Option<PathBuf>,
+
+        #[arg(short, long, default_value = "aarch64", help = "Target architecture (e.g. aarch64, armv7h, x86_64)")]
+        arch: String,
+    },
+}
+
+#[derive(Args, Debug)]
+pub struct RepoArgs {
+    #[command(subcommand)]
+    pub command: RepoSubcommand,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum RepoSubcommand {
+    #[command(about = "Update and index local repository database")]
+    Update {
+        #[arg(short, long, default_value = "aarch64", help = "Target architecture (e.g. aarch64, armv7h, x86_64)")]
+        arch: String,
+    },
+
+    #[command(about = "List locally built packages")]
+    List {
+        #[arg(short, long, default_value = "aarch64", help = "Target architecture (e.g. aarch64, armv7h, x86_64)")]
+        arch: String,
+    },
 }

@@ -13,7 +13,7 @@ use builder::ImageFormat;
 use clap::Parser;
 use cli::{
     BinfmtSubcommand, Cli, Commands, ConfigSubcommand, DeviceSubcommand, FlavourSubcommand,
-    ImageSubcommand, RootfsSubcommand,
+    ImageSubcommand, IsoSubcommand, PkgSubcommand, RepoSubcommand, RootfsSubcommand,
 };
 use config::Config;
 use error::{PootstrapError, Result};
@@ -70,9 +70,12 @@ fn run(args: Cli) -> Result<()> {
         Some(Commands::Flavour(flavour_args)) => handle_flavour(flavour_args),
         Some(Commands::Rootfs(rootfs_args)) => handle_rootfs(&config, rootfs_args),
         Some(Commands::Image(image_args)) => handle_image(&config, image_args),
+        Some(Commands::Iso(iso_args)) => handle_iso(&config, iso_args),
         Some(Commands::Run(run_args)) => handle_run(&config, run_args),
         Some(Commands::Flash(flash_args)) => handle_flash(&config, flash_args),
         Some(Commands::Chroot(chroot_args)) => handle_chroot(&config, chroot_args),
+        Some(Commands::Pkg(pkg_args)) => handle_pkg(&config, pkg_args),
+        Some(Commands::Repo(repo_args)) => handle_repo(&config, repo_args),
         Some(Commands::Binfmt(binfmt_args)) => handle_binfmt(binfmt_args),
     }
 }
@@ -260,6 +263,54 @@ fn handle_image(config: &Config, args: cli::ImageArgs) -> Result<()> {
     Ok(())
 }
 
+fn handle_iso(config: &Config, args: cli::IsoArgs) -> Result<()> {
+    match args.command {
+        IsoSubcommand::Build {
+            flavour,
+            rootfs,
+            output,
+            volume_id,
+        } => {
+            let flv_name = flavour.unwrap_or_else(|| config.default_flavour.clone());
+            let flv = FlavourProfile::find(&flv_name)
+                .ok_or(PootstrapError::FlavourNotFound(flv_name))?;
+
+            let dev = DeviceProfile::find("qemu-aarch64")
+                .or_else(|| DeviceProfile::find(&config.default_device))
+                .ok_or_else(|| PootstrapError::DeviceNotFound("qemu-aarch64".into()))?;
+
+            let rootfs_dir = rootfs.unwrap_or_else(|| {
+                config
+                    .work_dir
+                    .join("rootfs")
+                    .join(format!("{}-{}", dev.codename, flv.name))
+            });
+
+            if !builder::is_valid_rootfs(&rootfs_dir) {
+                tracing::info!(
+                    "Rootfs directory {:?} is not populated. Building it first...",
+                    rootfs_dir
+                );
+                let rootfs_builder =
+                    builder::RootfsBuilder::new(config, &dev, &flv, rootfs_dir.clone());
+                rootfs_builder.build()?;
+            }
+
+            let output_iso = output.unwrap_or_else(|| {
+                config
+                    .output_dir
+                    .join(format!("parch-aarch64-{}.iso", flv.name))
+            });
+
+            let iso_builder = builder::IsoBuilder::new(config, &flv, rootfs_dir, output_iso)
+                .with_volume_id(volume_id);
+
+            iso_builder.build()?;
+        }
+    }
+    Ok(())
+}
+
 fn handle_run(config: &Config, args: cli::RunArgs) -> Result<()> {
     let (image_path, dev_codename, flv_name) = match args.image {
         Some(path) => {
@@ -384,24 +435,100 @@ fn handle_flash(_config: &Config, args: cli::FlashArgs) -> Result<()> {
 }
 
 fn handle_chroot(config: &Config, args: cli::ChrootArgs) -> Result<()> {
+    let dev = args.device.unwrap_or_else(|| config.default_device.clone());
+    let flv = args.flavour.unwrap_or_else(|| config.default_flavour.clone());
+
     let rootfs_dir = match args.rootfs {
         Some(p) => p,
         None => {
-            config
+            let candidate = config
                 .work_dir
                 .join("rootfs")
-                .join(format!("{}-{}", config.default_device, config.default_flavour))
+                .join(format!("{}-{}", dev, flv));
+            if candidate.exists() {
+                candidate
+            } else {
+                let rootfs_parent = config.work_dir.join("rootfs");
+                let mut found = None;
+                if let Ok(entries) = std::fs::read_dir(&rootfs_parent) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_dir() && builder::is_valid_rootfs(&path) {
+                            found = Some(path);
+                            break;
+                        }
+                    }
+                }
+                match found {
+                    Some(f) => {
+                        tracing::info!("Auto-detected rootfs directory at {:?}", f);
+                        f
+                    }
+                    None => candidate,
+                }
+            }
         }
     };
 
     if !rootfs_dir.exists() {
         return Err(PootstrapError::RootfsBuild(format!(
-            "Rootfs directory {:?} does not exist",
+            "Rootfs directory {:?} does not exist. Run 'pootstrap rootfs build' first.",
             rootfs_dir
         )));
     }
 
     ChrootRunner::run_interactive_shell(&rootfs_dir)?;
+    Ok(())
+}
+
+fn handle_pkg(config: &Config, args: cli::PkgArgs) -> Result<()> {
+    match args.command {
+        PkgSubcommand::Build { path, arch } => {
+            let pkg_dir = path.unwrap_or_else(|| {
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+            });
+            let target_arch = match arch.to_lowercase().as_str() {
+                "aarch64" => Architecture::Aarch64,
+                "armv7h" => Architecture::Armv7h,
+                "x86_64" => Architecture::X86_64,
+                other => {
+                    return Err(PootstrapError::Config(format!(
+                        "Unsupported architecture '{}'. Supported: aarch64, armv7h, x86_64",
+                        other
+                    )));
+                }
+            };
+
+            let pkg_builder = builder::PackageBuilder::new(config, pkg_dir, target_arch);
+            let packages = pkg_builder.build()?;
+            println!("\nSuccessfully built {} package(s):", packages.len());
+            for p in packages {
+                println!("  - {:?}", p);
+            }
+            println!();
+        }
+    }
+    Ok(())
+}
+
+fn handle_repo(config: &Config, args: cli::RepoArgs) -> Result<()> {
+    match args.command {
+        RepoSubcommand::Update { arch } => {
+            let repo_dir = config.work_dir.join("repo").join(&arch);
+            let db_path = distro::LocalRepoManager::update_repo(&repo_dir, None)?;
+            println!("Local repository updated at {:?}", db_path);
+        }
+        RepoSubcommand::List { arch } => {
+            let repo_dir = config.work_dir.join("repo").join(&arch);
+            let packages = distro::LocalRepoManager::list_packages(&repo_dir)?;
+            println!("Local packages in {:?} ({} total):", repo_dir, packages.len());
+            for p in packages {
+                if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                    println!("  {}", name);
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -417,9 +544,10 @@ fn handle_binfmt(args: cli::BinfmtArgs) -> Result<()> {
 
             for arch in [Architecture::Aarch64, Architecture::Armv7h] {
                 let bin = isolation::BinfmtChecker::find_qemu_static(arch);
+                let supported = isolation::BinfmtChecker::check_support(arch).is_ok();
                 match bin {
-                    Some(path) => println!("  {:<8}: Available at {:?}", arch, path),
-                    None => println!("  {:<8}: Not found (needs {})", arch, arch.qemu_binary()),
+                    Some(path) => println!("  {:<8}: Available at {:?} (ready: {})", arch, path, supported),
+                    None => println!("  {:<8}: Not found (needs {}, ready: {})", arch, arch.qemu_binary(), supported),
                 }
             }
         }

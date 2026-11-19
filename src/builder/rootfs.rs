@@ -45,11 +45,15 @@ impl<'a> RootfsBuilder<'a> {
             PrivilegedRunner::create_dir_all(&self.target_rootfs)?;
         }
 
-        let has_binfmt = BinfmtChecker::check_support(self.device.arch).is_ok();
         let has_pacstrap = which::which("pacstrap").is_ok();
+        let binfmt_ready = BinfmtChecker::setup_qemu_in_rootfs(
+            self.device.arch,
+            &self.target_rootfs,
+            Some(&self.config.cache_dir),
+        ).is_ok();
 
-        if has_binfmt && has_pacstrap {
-            tracing::info!("Host supports binfmt and has pacstrap. Running native package installation...");
+        if has_pacstrap && binfmt_ready {
+            tracing::info!("Running native pacstrap from Parch and Arch Linux ARM repositories...");
             let pacman_conf_path = self.config.work_dir.join("pacman.conf");
             PacmanManager::generate_pacman_conf(
                 self.config,
@@ -72,14 +76,23 @@ impl<'a> RootfsBuilder<'a> {
             packages.extend(self.device.extra_packages.clone());
             packages.extend(self.flavour.packages.clone());
 
-            PacmanManager::run_pacstrap(
+            let pacstrap_result = PacmanManager::run_pacstrap(
                 &pacman_conf_path,
                 &self.config.cache_dir,
                 &self.target_rootfs,
                 &packages,
-            )?;
+            );
 
-            BinfmtChecker::setup_qemu_in_rootfs(self.device.arch, &self.target_rootfs)?;
+            if let Err(e) = pacstrap_result {
+                tracing::warn!("Direct pacstrap encountered an issue ({:?}), falling back to archive bootstrap...", e);
+                self.bootstrap_alarm_tarball(&self.target_rootfs)?;
+            } else {
+                let _ = BinfmtChecker::setup_qemu_in_rootfs(
+                    self.device.arch,
+                    &self.target_rootfs,
+                    Some(&self.config.cache_dir),
+                );
+            }
         } else {
             tracing::info!(
                 "Host lacks foreign binfmt or pacstrap. Bootstrapping via Arch Linux ARM rootfs archive..."
@@ -88,7 +101,7 @@ impl<'a> RootfsBuilder<'a> {
         }
 
         ChrootRunner::setup_resolv_conf(&self.target_rootfs)?;
-        self.configure_system(has_binfmt)?;
+        self.configure_system(binfmt_ready)?;
 
         let boot_dir = self.target_rootfs.join("boot");
         if boot_dir.exists() {

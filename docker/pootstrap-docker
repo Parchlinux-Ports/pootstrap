@@ -1,0 +1,28 @@
+#!/bin/sh
+set -e
+
+CONTAINER_TOOL=""
+if command -v podman >/dev/null 2>&1; then
+    CONTAINER_TOOL="podman"
+elif command -v docker >/dev/null 2>&1; then
+    CONTAINER_TOOL="docker"
+else
+    echo "Error: Neither podman nor docker found in PATH." >&2
+    exit 1
+fi
+
+IMAGE_NAME="${POOTSTRAP_IMAGE:-ghcr.io/parchlinux-ports/pootstrap:latest}"
+
+# Ensure host directories exist before mounting
+mkdir -p "$HOME/.config/pootstrap" "$HOME/.cache/pootstrap" "$HOME/.local/share/pootstrap"
+
+# Forward devices, volumes, and interactive TTY
+exec $CONTAINER_TOOL run --rm -it \
+    --privileged \
+    -v /dev:/dev \
+    -v "$HOME/.config/pootstrap:/root/.config/pootstrap" \
+    -v "$HOME/.cache/pootstrap:/root/.cache/pootstrap" \
+    -v "$HOME/.local/share/pootstrap:/root/.local/share/pootstrap" \
+    -v "$(pwd):/work" \
+    -w /work \
+    "$IMAGE_NAME" "$@"

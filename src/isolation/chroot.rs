@@ -148,13 +148,27 @@ impl ChrootRunner {
         Self::setup_resolv_conf(rootfs)?;
         let _guard = MountGuard::mount_pseudo_filesystems(rootfs)?;
 
+        let _ = crate::isolation::BinfmtChecker::setup_qemu_in_rootfs(
+            crate::profile::device::Architecture::Aarch64,
+            rootfs,
+            None,
+        );
+
+        let shell = if rootfs.join("bin/bash").exists() {
+            "/bin/bash"
+        } else if rootfs.join("bin/sh").exists() {
+            "/bin/sh"
+        } else {
+            "/bin/ash"
+        };
+
         let mut cmd = PrivilegedRunner::command("chroot");
-        cmd.arg(rootfs).arg("/bin/bash");
+        cmd.arg(rootfs).arg(shell);
         cmd.stdin(Stdio::inherit());
         cmd.stdout(Stdio::inherit());
         cmd.stderr(Stdio::inherit());
 
-        tracing::info!("Entering chroot interactive shell...");
+        tracing::info!("Entering chroot interactive shell ({:?})...", shell);
         let status = cmd.status().map_err(PootstrapError::Io)?;
 
         if !status.success() {
